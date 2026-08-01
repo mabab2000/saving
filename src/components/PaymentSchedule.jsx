@@ -22,9 +22,13 @@ const PaymentSchedule = () => {
     const issued = new Date(issuedDate);
     const due = new Date(deadline);
     
-    // Calculate payment range in months
+    // Calculate month difference between issued and deadline
     const monthsDiff = (due.getFullYear() - issued.getFullYear()) * 12 + (due.getMonth() - issued.getMonth());
-    const paymentRange = Math.max(1, monthsDiff);
+
+    // If issued on day <= 15, payments start in the same month (offset 0)
+    // If issued on day > 15, payments start in the next month (offset 1)
+    const startOffset = issued.getDate() <= 15 ? 0 : 1;
+    const paymentRange = Math.max(1, monthsDiff + 1 - startOffset);
     
     // Monthly principal payment
     const monthlyPrincipal = loanAmount / paymentRange;
@@ -44,9 +48,9 @@ const PaymentSchedule = () => {
       return new Date(year, month + 1, 0);
     };
 
-    for (let month = 1; month <= paymentRange; month++) {
-      // Calculate payment date for this installment as the last day of the target month
-      const paymentDateObj = getLastDayOfMonth(issued, month);
+    for (let i = 0; i < paymentRange; i++) {
+      // Calculate payment date as the last day of the target month
+      const paymentDateObj = getLastDayOfMonth(issued, startOffset + i);
       const paymentDate = paymentDateObj;
       
       // Interest is calculated on remaining balance
@@ -70,7 +74,7 @@ const PaymentSchedule = () => {
       }
       
       paymentSchedule.push({
-        month,
+        month: i + 1,
         paymentDate: paymentDate.toLocaleDateString(),
         principal: monthlyPrincipal,
         interest,

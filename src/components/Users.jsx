@@ -79,16 +79,18 @@ const Users = () => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         if (aborted) return;
-        // transform API response to UI shape: { id, name, email, phone, status }
+        // Transform the API response to the shape used by the users table.
         const transformed = data.map(u => ({
           id: u.id,
           name: u.username || u.name || '',
           email: u.email || '',
           phone: u.phone_number || u.phone || '',
           status: 'Active',
-          // API may return total_saving and original_saving
+          // Savings fields are returned by the users endpoint.
           total_saving: typeof u.total_saving !== 'undefined' ? Number(u.total_saving) : null,
-          original_saving: typeof u.original_saving !== 'undefined' ? Number(u.original_saving) : (typeof u.total_saving !== 'undefined' ? Number(u.total_saving) : null)
+          original_saving: typeof u.original_saving !== 'undefined' ? Number(u.original_saving) : (typeof u.total_saving !== 'undefined' ? Number(u.total_saving) : null),
+          active_loan: typeof u.active_loan !== 'undefined' ? Number(u.active_loan) : null,
+          saving_minus_active_loan: typeof u.saving_minus_active_loan !== 'undefined' ? Number(u.saving_minus_active_loan) : null
         }));
         setUsers(transformed);
       } catch (err) {
@@ -109,7 +111,9 @@ const Users = () => {
     u.name.toLowerCase().includes(search.toLowerCase()) ||
     (u.email && u.email.toLowerCase().includes(search.toLowerCase())) ||
     u.phone.includes(search) ||
-    (u.original_saving !== null && String(u.original_saving).includes(search))
+    (u.original_saving !== null && String(u.original_saving).includes(search)) ||
+    (u.active_loan !== null && String(u.active_loan).includes(search)) ||
+    (u.saving_minus_active_loan !== null && String(u.saving_minus_active_loan).includes(search))
   );
   const paginatedUsers = filteredUsers.slice((page - 1) * rowsPerPage, page * rowsPerPage);
   const pageCount = Math.max(1, Math.ceil(filteredUsers.length / rowsPerPage));
@@ -118,8 +122,10 @@ const Users = () => {
     return filteredUsers.reduce((acc, u) => {
       acc.total_saving += Number(u.total_saving || 0);
       acc.original_saving += Number(u.original_saving || 0);
+      acc.active_loan += Number(u.active_loan || 0);
+      acc.saving_minus_active_loan += Number(u.saving_minus_active_loan || 0);
       return acc;
-    }, { total_saving: 0, original_saving: 0 });
+    }, { total_saving: 0, original_saving: 0, active_loan: 0, saving_minus_active_loan: 0 });
   }, [filteredUsers]);
 
   // Helper function to get last day of month
@@ -562,6 +568,8 @@ const Users = () => {
                 <th className="py-3 px-4 text-left border-b">Name</th>
                 <th className="py-3 px-4 text-right border-b">Total Saving</th>
                 <th className="py-3 px-4 text-right border-b">Original Saving</th>
+                <th className="py-3 px-4 text-right border-b">Active Loan</th>
+                <th className="py-3 px-4 text-right border-b">Final Saving</th>
                 <th className="py-3 px-4 text-left border-b">Phone</th>
                 <th className="py-3 px-4 text-left border-b">Status</th>
                 <th className="py-3 px-4 text-left border-b">Actions</th>
@@ -577,6 +585,8 @@ const Users = () => {
                   </td>
                   <td className="py-3 px-4 border-b text-right">{typeof user.total_saving === 'number' ? new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(user.total_saving) : '—'}</td>
                   <td className="py-3 px-4 border-b text-right">{(typeof user.original_saving === 'number' || (typeof user.original_saving === 'string' && !isNaN(user.original_saving))) ? <span className="font-bold text-green-600">{new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(Number(user.original_saving))}</span> : '—'}</td>
+                  <td className="py-3 px-4 border-b text-right">{typeof user.active_loan === 'number' ? new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(user.active_loan) : '—'}</td>
+                  <td className="py-3 px-4 border-b text-right">{typeof user.saving_minus_active_loan === 'number' ? <span className={`font-bold ${user.saving_minus_active_loan < 0 ? 'text-red-600' : 'text-green-600'}`}>{new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(user.saving_minus_active_loan)}</span> : '—'}</td>
                   <td className="py-3 px-4 border-b">{user.phone}</td>
                   <td className="py-3 px-4 border-b">{user.status}</td>
                   <td className="py-3 px-4 border-b relative" ref={openDropdownId === user.id ? dropdownRef : null}>
@@ -607,7 +617,7 @@ const Users = () => {
 
               {paginatedUsers.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="py-6 text-center text-gray-500">No users found</td>
+                  <td colSpan={8} className="py-6 text-center text-gray-500">No users found</td>
                 </tr>
               )}
 
@@ -616,6 +626,8 @@ const Users = () => {
                   <td className="py-3 px-4 border-t">Total</td>
                   <td className="py-3 px-4 border-t text-right">{new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(usersTotals.total_saving)}</td>
                   <td className="py-3 px-4 border-t text-right"><span className="font-bold text-green-600">{new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(usersTotals.original_saving)}</span></td>
+                  <td className="py-3 px-4 border-t text-right">{new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(usersTotals.active_loan)}</td>
+                  <td className="py-3 px-4 border-t text-right"><span className={`font-bold ${usersTotals.saving_minus_active_loan < 0 ? 'text-red-600' : 'text-green-600'}`}>{new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(usersTotals.saving_minus_active_loan)}</span></td>
                   <td className="py-3 px-4 border-t tex-lef">&nbsp;</td>
                   <td className="py-3 px-4 border-t text-right">&nbsp;</td>
                   <td className="py-3 px-4 border-t text-right">&nbsp;</td>

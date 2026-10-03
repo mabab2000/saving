@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useToast } from './Toast';
 
@@ -11,13 +11,14 @@ const mockPayments = [
 export default function Payment() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const toast = useToast();
+  const { addToast } = useToast();
 
   const [payments, setPayments] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
   const [newAmount, setNewAmount] = useState('');
+  const [paymentType, setPaymentType] = useState('payment');
   const [adding, setAdding] = useState(false);
 
   const [totalAmount, setTotalAmount] = useState(null);
@@ -28,7 +29,7 @@ export default function Payment() {
   const userIdFromQuery = query.get('user') || null;
 
   // reusable loader so we can refresh after creating a payment
-  const loadPayments = async (signal) => {
+  const loadPayments = useCallback(async (signal) => {
     setLoading(true);
     setError(null);
     try {
@@ -44,48 +45,55 @@ export default function Payment() {
       if (err.name === 'AbortError') return;
       setError(err.message || 'Failed to load payments');
       setPayments(mockPayments);
-      toast.addToast('Using fallback payment data (could not fetch from server).', { type: 'info' });
+      addToast('Using fallback payment data (could not fetch from server).', { type: 'info' });
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
-  };
+  }, [id, addToast]);
 
   useEffect(() => {
-    let aborted = false;
     const controller = new AbortController();
     loadPayments(controller.signal).catch(() => {});
-    return () => { aborted = true; controller.abort(); };
-  }, [id]);
+    return () => controller.abort();
+  }, [loadPayments]);
 
-  const handleAddPayment = async () => {
-    if (!userIdFromQuery) {
-      toast.addToast('Missing user id; cannot add payment', { type: 'error' });
+  const handleAddPayment = async (event) => {
+    event.preventDefault();
+    if (adding) return;
+
+    const isInterestOnly = paymentType === 'interestOnly';
+    if (!isInterestOnly && !userIdFromQuery) {
+      addToast('Missing user id; cannot add payment', { type: 'error' });
       return;
     }
     const amt = Number(newAmount);
-    if (!amt || amt <= 0) {
-      toast.addToast('Enter a valid amount', { type: 'error' });
+    if (!Number.isFinite(amt) || amt <= 0) {
+      addToast('Enter a valid amount', { type: 'error' });
       return;
     }
     setAdding(true);
     try {
-      const res = await fetch('https://saving-api.mababa.app/api/loan-payment', {
+      const endpoint = isInterestOnly ? 'pay-only-interest' : 'loan-payment';
+      const payload = isInterestOnly
+        ? { loan_id: id, amount: amt }
+        : { user_id: userIdFromQuery, loan_id: id, amount: amt };
+      const res = await fetch(`https://saving-api.mababa.app/api/${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: userIdFromQuery, loan_id: id, amount: amt })
+        body: JSON.stringify(payload)
       });
       if (!res.ok) {
         const txt = await res.text();
         throw new Error(txt || `HTTP ${res.status}`);
       }
       const body = await res.json().catch(() => ({}));
-      const msg = body && body.message ? body.message : 'Payment added';
-      toast.addToast(msg, { type: 'success' });
+      const msg = body && body.message ? body.message : isInterestOnly ? 'Interest-only payment added' : 'Payment added';
+      addToast(msg, { type: 'success' });
       setNewAmount('');
       // refresh list & totals
       await loadPayments();
     } catch (err) {
-      toast.addToast(err.message || 'Failed to add payment', { type: 'error' });
+      addToast(err.message || (isInterestOnly ? 'Failed to add interest-only payment' : 'Failed to add payment'), { type: 'error' });
     } finally {
       setAdding(false);
     }
@@ -95,17 +103,27 @@ export default function Payment() {
 
   return (
     <div className="p-6">
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div>
           <h2 className="text-2xl font-bold">Payments</h2>
           <div className="text-sm text-gray-600">Loan ID: {id}</div>
         </div>
-        <div className="flex items-center space-x-2">
+        <div className="flex flex-wrap items-end gap-2">
           <button onClick={() => navigate(-1)} className="px-3 py-2 border rounded">Back</button>
-          <div className="flex items-center space-x-2">
-            <input type="number" placeholder="Amount" value={newAmount} onChange={e => setNewAmount(e.target.value)} className="border px-3 py-2 rounded" />
-            <button onClick={handleAddPayment} disabled={adding} className="px-3 py-2 bg-green-600 text-white rounded disabled:opacity-50">{adding ? 'Adding...' : 'Add Payment'}</button>
-          </div>
+          <form onSubmit={handleAddPayment} className="flex flex-wrap items-end gap-2">
+            <label className="flex flex-col gap-1 text-sm text-gray-700">
+              Payment type
+              <select value={paymentType} onChange={e => setPaymentType(e.target.value)} disabled={adding} className="border px-3 py-2 rounded bg-white">
+                <option value="payment">Generate payment</option>
+                <option value="interestOnly">Pay interest only</option>
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-sm text-gray-700">
+              Amount
+              <input type="number" min="0" step="any" placeholder="Amount" value={newAmount} onChange={e => setNewAmount(e.target.value)} disabled={adding} className="border px-3 py-2 rounded" />
+            </label>
+            <button type="submit" disabled={adding} className="px-3 py-2 bg-green-600 text-white rounded disabled:opacity-50">{adding ? 'Adding...' : paymentType === 'interestOnly' ? 'Pay interest only' : 'Generate payment'}</button>
+          </form>
         </div>
       </div>
 

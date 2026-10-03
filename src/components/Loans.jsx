@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from './Toast';
 
@@ -8,13 +8,18 @@ const mockLoans = [
   { id: 3, borrower: 'Alice Brown', amount: 7000, status: 'Rejected', date: '2024-08-20' },
 ];
 
+const normalizeStatus = (status) => String(status || '').trim().toLowerCase();
+const statusClasses = {
+  active: 'bg-green-100 text-green-800',
+  closed: 'bg-gray-100 text-gray-700',
+};
+
 const Loans = () => {
   const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
   const [page, setPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [loans, setLoans] = useState([]);
-  const [totalAmount, setTotalAmount] = useState(null);
-  const [totalCount, setTotalCount] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [editId, setEditId] = useState(null);
@@ -39,15 +44,22 @@ const Loans = () => {
   }, []);
 
   const filteredLoans = loans.filter(l =>
-    (l.username || l.borrower || '').toString().toLowerCase().includes(search.toLowerCase()) ||
-    (l.phone_number || '').toString().includes(search) ||
-    (l.amount || '').toString().includes(search) ||
-    (l.issued_date || '').toString().toLowerCase().includes(search.toLowerCase())
-  );
+    (statusFilter === 'all' || normalizeStatus(l.status) === statusFilter) && (
+      (l.username || l.borrower || '').toString().toLowerCase().includes(search.toLowerCase()) ||
+      (l.phone_number || '').toString().includes(search) ||
+      (l.amount || '').toString().includes(search) ||
+      (l.issued_date || '').toString().toLowerCase().includes(search.toLowerCase())
+    )
+  ).sort((a, b) => Number(normalizeStatus(b.status) === 'active') - Number(normalizeStatus(a.status) === 'active'));
   const paginatedLoans = filteredLoans.slice((page - 1) * rowsPerPage, page * rowsPerPage);
   const pageCount = Math.max(1, Math.ceil(filteredLoans.length / rowsPerPage));
 
-  const loansTotal = useMemo(() => filteredLoans.reduce((s, l) => s + (Number(l.amount || 0)), 0), [filteredLoans]);
+  const loanTotals = filteredLoans.reduce((totals, loan) => {
+    totals.amount += Number(loan.amount) || 0;
+    totals.amountPaid += Number(loan.total_amount_paid) || 0;
+    totals.interestPaid += Number(loan.total_interest_paid) || 0;
+    return totals;
+  }, { amount: 0, amountPaid: 0, interestPaid: 0 });
 
   const openAddModal = () => { setEditId(null); setFormData({ borrower: '', amount: '', status: 'Pending', date: '' }); setIsModalOpen(true); };
   const openEditModal = (id) => { const l = loans.find(x => x.id === id); setEditId(id); setFormData({ borrower: l.borrower, amount: l.amount, status: l.status, date: l.date }); setIsModalOpen(true); setOpenDropdownId(null); };
@@ -57,7 +69,6 @@ const Loans = () => {
     setIsModalOpen(false); setFormData({ borrower: '', amount: '', status: 'Pending', date: '' }); setEditId(null);
   };
   const handleDelete = (id) => { 
-    const loan = loans.find(l => l.id === id);
     setDeleteId(id);
     setIsDeleteModalOpen(true);
     setOpenDropdownId(null);
@@ -99,14 +110,15 @@ const Loans = () => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const body = await res.json();
         if (aborted) return;
-        setTotalAmount(body.total_amount);
-        setTotalCount(body.total_loan);
         const transformed = (body.loans || []).map(x => ({
           id: x.id,
           user_id: x.user_id,
           username: x.username,
           phone_number: x.phone_number,
           amount: x.amount,
+          total_amount_paid: x.total_amount_paid,
+          total_interest_paid: x.total_interest_paid,
+          status: x.status,
           issued_date: x.issued_date,
           deadline: x.deadline,
           created_at: x.created_at,
@@ -127,10 +139,16 @@ const Loans = () => {
 
   return (
     <div className="p-6">
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <h2 className="text-2xl font-bold">Loans</h2>
-        <div className="flex items-center space-x-3">
+        <div className="flex flex-wrap items-center gap-3">
           <input type="text" placeholder="Search loans..." value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} className="border px-3 py-2 rounded-lg w-64" />
+          <label htmlFor="loan-status-filter" className="text-sm text-gray-600">Status</label>
+          <select id="loan-status-filter" value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setPage(1); }} className="border px-2 py-2 rounded">
+            <option value="all">All</option>
+            <option value="active">Active</option>
+            <option value="closed">Closed</option>
+          </select>
           <label className="text-sm text-gray-600">Show</label>
           <select value={rowsPerPage} onChange={e => { setRowsPerPage(Number(e.target.value)); setPage(1); }} className="border px-2 py-2 rounded">
         
@@ -151,13 +169,17 @@ const Loans = () => {
         </div>
       ) : (
         <>
+          {error && <div role="alert" className="mb-4 text-sm text-red-600">Could not load loans: {error}. Showing sample data.</div>}
           <div className="overflow-x-auto bg-white border rounded-lg">
             <table className="min-w-full table-very-small">
               <thead>
                 <tr>
                   <th className="py-3 px-4 text-left border-b">User</th>
                   <th className="py-3 px-4 text-left border-b">Phone</th>
-                  <th className="py-3 px-4 text-left border-b">Amount</th>
+                  <th className="py-3 px-4 text-left border-b">Loan Amount</th>
+                  <th className="py-3 px-4 text-left border-b">Amount Paid</th>
+                  <th className="py-3 px-4 text-left border-b">Interest Paid</th>
+                  <th className="py-3 px-4 text-left border-b">Loan Status</th>
                   <th className="py-3 px-4 text-left border-b">Issued</th>
                   <th className="py-3 px-4 text-left border-b">Deadline</th>
                   <th className="py-3 px-4 text-left border-b">Actions</th>
@@ -169,6 +191,13 @@ const Loans = () => {
                     <td className="py-3 px-4 border-b">{l.username}</td>
                     <td className="py-3 px-4 border-b">{l.phone_number}</td>
                     <td className="py-3 px-4 border-b">{formatNumber(l.amount)}</td>
+                    <td className="py-3 px-4 border-b">{l.total_amount_paid == null ? '—' : formatNumber(l.total_amount_paid)}</td>
+                    <td className="py-3 px-4 border-b">{l.total_interest_paid == null ? '—' : formatNumber(l.total_interest_paid)}</td>
+                    <td className="py-3 px-4 border-b">
+                      <span className={`inline-flex rounded-full px-2 py-0.5 font-medium capitalize ${statusClasses[normalizeStatus(l.status)] || 'bg-gray-50 text-gray-600'}`}>
+                        {l.status || '—'}
+                      </span>
+                    </td>
                     <td className="py-3 px-4 border-b">{l.issued_date ? new Date(l.issued_date).toLocaleString() : ''}</td>
                     <td className="py-3 px-4 border-b">{l.deadline ? new Date(l.deadline).toLocaleString() : ''}</td>
                     <td className="py-3 px-4 border-b relative" ref={openDropdownId === l.id ? dropdownRef : null}>
@@ -187,13 +216,16 @@ const Loans = () => {
                     </td>
                   </tr>
                 ))}
-                {paginatedLoans.length === 0 && (<tr><td colSpan={6} className="py-6 text-center text-gray-500">No loans found</td></tr>)}
+                {paginatedLoans.length === 0 && (<tr><td colSpan={9} className="py-6 text-center text-gray-500">No loans found</td></tr>)}
 
                 {filteredLoans.length > 0 && (
                   <tr className="bg-gray-50 font-semibold">
                     <td className="py-3 px-4 border-t">Total</td>
                     <td className="py-3 px-4 border-t">&nbsp;</td>
-                    <td className="py-3 px-4 border-t">{formatNumber(loansTotal)}</td>
+                    <td className="py-3 px-4 border-t">{formatNumber(loanTotals.amount)}</td>
+                    <td className="py-3 px-4 border-t">{formatNumber(loanTotals.amountPaid)}</td>
+                    <td className="py-3 px-4 border-t">{formatNumber(loanTotals.interestPaid)}</td>
+                    <td className="py-3 px-4 border-t">&nbsp;</td>
                     <td className="py-3 px-4 border-t">&nbsp;</td>
                     <td className="py-3 px-4 border-t">&nbsp;</td>
                     <td className="py-3 px-4 border-t">&nbsp;</td>
